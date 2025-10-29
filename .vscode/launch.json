@@ -1,0 +1,32 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "(GDB) Launch GTK Program",
+      "type": "cppdbg",
+      "request": "launch",
+      // This points to the 'main.exe' file in your project root,
+      // matching the output '-o' from tasks.json.
+      "program": "${workspaceFolder}/main.exe",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}", // Run the program from the root folder.
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      // This is the path to your debugger.
+      "miDebuggerPath": "C:\\msys64\\mingw64\\bin\\gdb.exe", // <-- 3. CHECK THIS PATH
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ],
+      // This links to your 'tasks.json' build label.
+      // When you press F5, this runs first to build your code.
+      "preLaunchTask": "Build GTK Program (GCC)"
+    }
+  ]
+}
+

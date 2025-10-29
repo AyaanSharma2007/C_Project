@@ -1,0 +1,33 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build GTK Program (GCC)",
+      "type": "shell",
+      "command": "C:\\msys64\\usr\\bin\\bash.exe", // <-- CHECK THIS PATH
+      "args": [
+        "-c",
+        // This command is now more robust.
+        // It explicitly builds 'src/main.c'
+        // It explicitly outputs to 'main.exe' in the project root.
+        // It explicitly adds your new 'include' folder to the search path.
+        "gcc -g -I'${workspaceFolder}/include' -o '${workspaceFolder}/main.exe' '${workspaceFolder}/src/main.c' $(pkg-config --cflags --libs gtk3)"
+        //                                                                                                          ^^^^
+        //                                                                                        If you use GTK 3, change 'gtk4' to 'gtk3'
+      ],
+      "options": {
+        "env": {
+          "PATH": "C:\\msys64\\mingw64\\bin;C:\\msys64\\usr\\bin;${env:PATH}" // <-- CHECK THIS PATH
+        }
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": [
+        "$gcc"
+      ]
+    }
+  ]
+}
+
