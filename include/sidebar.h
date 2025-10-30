@@ -15,4 +15,7 @@
  */
 GtkWidget *create_sidebar(GtkWindow *parent_window);
 
+/* Clear all children from a container (list box) */
+void clear_list_box_widget(GtkWidget *box_widget);
+
 #endif // SIDEBAR_H
