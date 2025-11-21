@@ -19,7 +19,6 @@ HEADERS = include/sidebar.h include/context_menu.h
 OBJECTS = $(notdir $(SOURCES:.c=.o))
 
 # The name of your final program
-EXECUTABLE = myapp
 EXECUTABLE = myapp.exe
 
 # Default target: build the executable
