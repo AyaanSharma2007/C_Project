@@ -1,6 +1,7 @@
 #include <gtk/gtk.h>
 #include "sidebar.h" 
 #include "context_menu.h"
+#include <stdlib.h> // For _putenv_s on Windows
 // Use a struct to hold application state instead of globals
 typedef struct {
     gboolean is_dark_mode;
@@ -13,32 +14,12 @@ static gboolean paned_set_cb(gpointer user_data) {
     PanedSetData *d = (PanedSetData *)user_data;
     if (!d) return G_SOURCE_REMOVE;
     if (!GTK_IS_WINDOW(d->window) || !GTK_IS_PANED(d->paned)) { g_free(d); return G_SOURCE_REMOVE; }
-    int w = gtk_widget_get_allocated_width(GTK_WIDGET(d->window));
+    // Use the modern, non-deprecated GTK4 function to get widget width.
+    int w = gtk_widget_get_width(GTK_WIDGET(d->window));
     int pos = (int)(w * 0.40);
     gtk_paned_set_position(GTK_PANED(d->paned), pos);
     g_free(d);
     return G_SOURCE_REMOVE;
-}
-
-static void
-attach_context_menu(GtkWidget *widget, gpointer context)
-{
-    GtkGesture *right_click;
-
-    right_click = gtk_gesture_click_new();
-    
-    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(right_click), 
-                                  GDK_BUTTON_SECONDARY);
-
-    // --- THIS IS THE CORRECTED LINE ---
-    // The compiler was right. We must use the 'single' variant.
-    gtk_gesture_single_set_exclusive(GTK_GESTURE_SINGLE(right_click), TRUE);
-
-    g_signal_connect(right_click, "pressed",
-                     G_CALLBACK(on_widget_right_click),
-                     context);
-
-    gtk_widget_add_controller(widget, GTK_EVENT_CONTROLLER(right_click));
 }
 // Dark mode callback now uses the AppData struct
 static void on_toggle_button_clicked(GtkButton *button, gpointer user_data) {
@@ -198,6 +179,13 @@ static void on_activate(GApplication *app, gpointer user_data) {
 
 // The new main function just sets up and runs the GtkApplication
 int main(int argc, char **argv) {
+    // Set the GSK_RENDERER environment variable to "cairo" for this process.
+    // This is done to prevent screen flickering issues on some Windows systems
+    // by forcing a software rendering backend. This must be done before
+    // GTK is initialized (i.e., before g_application_run).
+    // We use the secure _putenv_s on Windows.
+    _putenv_s("GSK_RENDERER", "cairo");
+
     // 1. Create a new application
     GtkApplication *app = gtk_application_new(
         "com.example.gyatthub", // A unique ID
