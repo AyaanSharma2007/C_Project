@@ -16,23 +16,24 @@ HEADERS = include/sidebar.h include/context_menu.h
 
 # This *automatically* creates the list of .o files
 # This will correctly become: src/main.o src/sidebar.o src/context_menu.o
-OBJECTS = $(SOURCES:.c=.o)
+OBJECTS = $(notdir $(SOURCES:.c=.o))
 
 # The name of your final program
 EXECUTABLE = myapp
+EXECUTABLE = myapp.exe
 
 # Default target: build the executable
 all: $(EXECUTABLE)
 
 # Rule to *link* the executable
 # This only runs if any of the .o files have changed
-$(EXECUTABLE): $(OBJECTS)
+$(EXECUTABLE): $(OBJECTS) 
 	$(CC) $(OBJECTS) -o $@ $(LDFLAGS)
 
-# A "pattern rule" to compile a .c file from 'src/' into a .o file in 'src/'
-# This tells make: "To build a file like src/%.o, you need src/%.c and all the HEADERS"
-src/%.o: src/%.c $(HEADERS)
-	$(CC) -c $< -o $@ $(CFLAGS)
+# A "pattern rule" to compile a .c file from 'src/' into a .o file in the current directory
+# This tells make: "To build a file like %.o, you need src/%.c and all the HEADERS"
+%.o: src/%.c $(HEADERS)
+	$(CC) $(CFLAGS) -c $< -o $@
 
 # Rule to clean up *all* built files
 clean:

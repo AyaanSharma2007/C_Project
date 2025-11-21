@@ -1,5 +1,5 @@
 #include <gtk/gtk.h>
-#include "sidebar.h" 
+#include "sidebar.h"
 #include "context_menu.h"
 #include <stdlib.h> // For _putenv_s on Windows
 // Use a struct to hold application state instead of globals
