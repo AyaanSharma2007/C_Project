@@ -134,7 +134,15 @@ void populate_versions_for_path(GtkWindow *parent, GtkListBox *versions_list, co
 
                         gchar *stored_path = g_build_filename("data", "versions", stored, NULL);
                         g_object_set_data_full(G_OBJECT(vrow), "version-path", g_strdup(stored_path), g_free);
+                        g_object_set_data_full(G_OBJECT(vrow), "file-path", g_strdup(stored_path), g_free); // Set file-path for comparison
                         g_free(stored_path);
+
+                        /* Attach right-click gesture to version row so user can open/delete the version */
+                        GtkGesture *right_click = gtk_gesture_click_new();
+                        gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(right_click), GDK_BUTTON_SECONDARY);
+                        gtk_gesture_single_set_exclusive(GTK_GESTURE_SINGLE(right_click), FALSE);
+                        g_signal_connect(right_click, "pressed", G_CALLBACK(on_widget_right_click), (gpointer)"version-element");
+                        gtk_widget_add_controller(vrow, GTK_EVENT_CONTROLLER(right_click));
 
                         gtk_list_box_append(GTK_LIST_BOX(versions_list), vrow);
                         g_free(label_text);
@@ -144,11 +152,6 @@ void populate_versions_for_path(GtkWindow *parent, GtkListBox *versions_list, co
         }
         g_object_unref(parser);
         g_free(index_path);
-        /* Connect row-activated once */
-        if (g_object_get_data(G_OBJECT(versions_list), "row-activated-connected") == NULL) {
-            g_signal_connect(versions_list, "row-activated", G_CALLBACK(on_version_activated), NULL);
-            g_object_set_data(G_OBJECT(versions_list), "row-activated-connected", GINT_TO_POINTER(1));
-        }
         return;
     }
 #endif
@@ -207,6 +210,7 @@ void populate_versions_for_path(GtkWindow *parent, GtkListBox *versions_list, co
 
             gchar *stored_path = g_build_filename("data", "versions", stored, NULL);
             g_object_set_data_full(G_OBJECT(vrow), "version-path", g_strdup(stored_path), g_free);
+            g_object_set_data_full(G_OBJECT(vrow), "file-path", g_strdup(stored_path), g_free); // Set file-path for comparison
             /* Also store labels for potential updates */
             g_object_set_data(G_OBJECT(vrow), "version-name-label", name_label);
             g_object_set_data(G_OBJECT(vrow), "version-time-label", time_label);
@@ -225,18 +229,6 @@ void populate_versions_for_path(GtkWindow *parent, GtkListBox *versions_list, co
     }
     fclose(f);
     g_free(index_path_txt);
-
-    /* Connect row-activated once */
-    if (g_object_get_data(G_OBJECT(versions_list), "row-activated-connected") == NULL) {
-        g_signal_connect(versions_list, "row-activated", G_CALLBACK(on_version_activated), NULL);
-        g_object_set_data(G_OBJECT(versions_list), "row-activated-connected", GINT_TO_POINTER(1));
-    }
-
-    /* Connect row-activated once */
-    if (g_object_get_data(G_OBJECT(versions_list), "row-activated-connected") == NULL) {
-        g_signal_connect(versions_list, "row-activated", G_CALLBACK(on_version_activated), NULL);
-        g_object_set_data(G_OBJECT(versions_list), "row-activated-connected", GINT_TO_POINTER(1));
-    }
 }
 
 /* Open a stored version when its row is activated (double click) */
@@ -426,6 +418,7 @@ static void on_row_selected(GtkListBox *list_box, GtkListBoxRow *row, gpointer u
         const char *path = g_object_get_data(G_OBJECT(row), "file-path");
         toplevel = gtk_widget_get_ancestor(GTK_WIDGET(row), GTK_TYPE_WINDOW);
         if (toplevel) {
+            g_object_set_data(G_OBJECT(toplevel), "original-path", (gpointer)path);
             GtkWidget *v = g_object_get_data(G_OBJECT(toplevel), "versions-list");
             if (v && GTK_IS_LIST_BOX(v)) {
                 versions_list = GTK_LIST_BOX(v);

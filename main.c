@@ -127,16 +127,17 @@ static void on_activate(GApplication *app, gpointer user_data) {
     // 7. Load CSS (Updated for GTK4 syntax)
     cssProvider = gtk_css_provider_new();
     const char *css_data =
+        "* { font-size: 102%; }"
         "#header {"
         "   background: @fg_color;" /* FIX: Added @ */
         "   padding: 10px;"
         "}"
         "#header-label {"
         "   color: @bg_color;"      /* FIX: Added @ */
-        "   font-size: 30px;"
+        "   font-size: 1.5em;"
         "}"
         "#big-label {"
-        "   font-size: 30px;"
+        "   font-size: 1.5em;"
         "}"
         ".sidebar-button {"
         "   border-radius: 0;"
@@ -148,7 +149,7 @@ static void on_activate(GApplication *app, gpointer user_data) {
         "   background: mix(@fg_color, @bg_color, 0.1);"
         "}"
         "#file-list-box row label {"
-        "   font-size: 20px;"
+        "   font-size: 1em;"
         "   padding-top: 2px;"
         "   padding-bottom: 2px;"
         "}";

@@ -1,18 +1,29 @@
 #include <gtk/gtk.h>
 #include "context_menu.h"
+#include "diff_view.h"
 #include <stdio.h> // For printf
 #include <gio/gio.h>
 #include <time.h>
+#include <errno.h>
+#include <string.h>
 #if defined(__has_include)
 # if __has_include(<json-glib/json-glib.h>)
 #  include <json-glib/json-glib.h>
 #  define HAVE_JSON_GLIB 1
 # endif
 #endif
-#if defined(G_OS_WIN32)
+#if defined(G_OS_WIN32) || defined(_WIN32) || defined(__MINGW32__)
 #include <windows.h>
 #include <shellapi.h>
+#include <wchar.h>
 #endif
+
+// ---
+// --- Globals for version comparison
+// ---
+
+// List to store pointers to selected version widgets for comparison
+static GList *selected_for_comparison = NULL;
 
 // ---
 // --- CONTEXT 1: "sidebar-element" Actions
@@ -551,22 +562,242 @@ static void open_version(GSimpleAction *action, GVariant *parameter, gpointer us
     open(action, parameter, user_data);
 }
 
+static void clear_comparison_selection() {
+    for (GList *l = selected_for_comparison; l != NULL; l = l->next) {
+        GtkWidget *widget = GTK_WIDGET(l->data);
+        gtk_widget_remove_css_class(widget, "selected-for-compare");
+    }
+    g_list_free_full(selected_for_comparison, g_object_unref);
+    selected_for_comparison = NULL;
+}
+
+static void compare_versions(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
+    if (g_list_length(selected_for_comparison) != 2) {
+        g_printerr("Compare action should not be available\n");
+        return;
+    }
+
+    GtkWidget *widget1 = GTK_WIDGET(selected_for_comparison->data);
+    GtkWidget *widget2 = GTK_WIDGET(selected_for_comparison->next->data);
+
+    const char *path1 = g_object_get_data(G_OBJECT(widget1), "file-path");
+    const char *path2 = g_object_get_data(G_OBJECT(widget2), "file-path");
+
+    if (path1 && path2) {
+        g_print("Comparing '%s' and '%s'\n", path1, path2);
+        GtkWindow *parent = GTK_WINDOW(gtk_widget_get_ancestor(widget1, GTK_TYPE_WINDOW));
+        create_diff_window(parent, path1, path2);
+    } else {
+        g_printerr("Could not get paths for comparison\n");
+    }
+    clear_comparison_selection();
+}
+
+static void select_for_comparison(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
+    GtkWidget *widget = GTK_WIDGET(user_data);
+
+    if (g_list_find(selected_for_comparison, widget)) {
+        // Already selected, so unselect it
+        gtk_widget_remove_css_class(widget, "selected-for-compare");
+        selected_for_comparison = g_list_remove(selected_for_comparison, widget);
+        g_object_unref(widget);
+    } else {
+        // Not selected, so add it
+        gtk_widget_add_css_class(widget, "selected-for-compare");
+        selected_for_comparison = g_list_prepend(selected_for_comparison, widget);
+        g_object_ref(widget);
+
+        // If we now have more than 2 items, remove the oldest one
+        if (g_list_length(selected_for_comparison) > 2) {
+            GList *last = g_list_last(selected_for_comparison);
+            GtkWidget *last_widget = GTK_WIDGET(last->data);
+            gtk_widget_remove_css_class(last_widget, "selected-for-compare");
+            g_object_unref(last_widget);
+            selected_for_comparison = g_list_delete_link(selected_for_comparison, last);
+        }
+    }
+}
+
+// Data for repopulating versions list after deletion
+typedef struct {
+    GtkWindow *window;
+    GtkListBox *versions_list;
+    gchar *original_path;
+} RepopulateData;
+
+static gboolean repopulate_versions_idle(gpointer user_data) {
+    RepopulateData *data = (RepopulateData *)user_data;
+    if (data && data->window && data->versions_list && data->original_path) {
+        extern void populate_versions_for_path(GtkWindow *parent, GtkListBox *versions_list, const char *original_path);
+        populate_versions_for_path(data->window, data->versions_list, data->original_path);
+    }
+    if (data) {
+        g_free(data->original_path);
+        g_free(data);
+    }
+    return G_SOURCE_REMOVE;
+}
+
 static void delete_version(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
     GtkWidget *row = GTK_WIDGET(user_data);
     const char *vpath = g_object_get_data(G_OBJECT(row), "version-path");
     if (!vpath) return;
-    if (remove(vpath) == 0) {
-        /* remove row from listbox */
-        GtkWidget *parent = gtk_widget_get_parent(row);
-        if (GTK_IS_LIST_BOX(parent)) gtk_list_box_remove(GTK_LIST_BOX(parent), row);
-    } else {
-        g_printerr("delete_version: failed to remove %s\n", vpath);
+
+    // Store information we need before destroying anything
+    GtkWidget *toplevel = gtk_widget_get_ancestor(row, GTK_TYPE_WINDOW);
+    const char *original_path = NULL;
+    GtkWidget *versions_list = NULL;
+    
+    if (toplevel) {
+        original_path = g_object_get_data(G_OBJECT(toplevel), "original-path");
+        versions_list = g_object_get_data(G_OBJECT(toplevel), "versions-list");
     }
+
+    // Duplicate the path since vpath is stored on the row which will be destroyed
+    gchar *vpath_copy = g_strdup(vpath);
+    
+    // Destroy the popover menu before attempting to remove the row
+    GtkWidget *popover = g_object_get_data(G_OBJECT(row), "popover");
+    if (popover && GTK_IS_WIDGET(popover)) {
+        gtk_popover_popdown(GTK_POPOVER(popover));
+        gtk_widget_unparent(popover);
+        g_object_set_data(G_OBJECT(row), "popover", NULL);
+    }
+
+    // Try to remove the file (use _wremove on Windows for better Unicode support)
+#if defined(_WIN32) || defined(__MINGW32__)
+    wchar_t *wpath = g_utf8_to_utf16(vpath_copy, -1, NULL, NULL, NULL);
+    int result = -1;
+    if (wpath) {
+        result = _wremove(wpath);
+        g_free(wpath);
+    }
+#else
+    int result = remove(vpath_copy);
+#endif
+
+    if (result == 0) {
+        g_print("delete_version: successfully removed %s\n", vpath_copy);
+
+        gchar *stored_basename = g_path_get_basename(vpath_copy);
+
+#ifdef HAVE_JSON_GLIB
+        /* Update JSON index: data/versions_index.json */
+        const char *data_dir = "data";
+        gchar *index_path = g_build_filename(data_dir, "versions_index.json", NULL);
+        JsonParser *parser = json_parser_new();
+        JsonArray *arr = NULL;
+        GError *error = NULL;
+
+        if (g_file_test(index_path, G_FILE_TEST_EXISTS)) {
+            if (json_parser_load_from_file(parser, index_path, &error)) {
+                JsonNode *root = json_parser_get_root(parser);
+                if (JSON_NODE_HOLDS_ARRAY(root)) {
+                    arr = json_node_get_array(root);
+                    JsonArray *new_arr = json_array_new();
+
+                    for (guint i = 0; i < json_array_get_length(arr); i++) {
+                        JsonNode *elem = json_array_get_element(arr, i);
+                        if (JSON_NODE_HOLDS_OBJECT(elem)) {
+                            JsonObject *obj = json_node_get_object(elem);
+                            const char *stored = json_object_get_string_member(obj, "stored");
+                            if (g_strcmp0(stored, stored_basename) != 0) {
+                                json_array_add_element(new_arr, json_node_copy(elem));
+                            }
+                        }
+                    }
+
+                    // Write back the new array
+                    JsonGenerator *gen = json_generator_new();
+                    JsonNode *root_node = json_node_new(JSON_NODE_ARRAY);
+                    json_node_set_array(root_node, new_arr);
+                    json_generator_set_root(gen, root_node);
+                    json_generator_to_file(gen, index_path, NULL);
+                    g_object_unref(gen);
+                    json_node_free(root_node);
+                }
+            } else {
+                g_clear_error(&error);
+            }
+        }
+        if (parser) g_object_unref(parser);
+        g_free(index_path);
+#else
+        /* Fallback index: data/versions_index.txt */
+        const char *data_dir = "data";
+        gchar *index_path = g_build_filename(data_dir, "versions_index.txt", NULL);
+        if (stored_basename && g_file_test(index_path, G_FILE_TEST_EXISTS)) {
+            GPtrArray *lines = g_ptr_array_new_with_free_func(g_free);
+            FILE *f = fopen(index_path, "r");
+            if (f) {
+                char buf[4096];
+                while (fgets(buf, sizeof(buf), f)) {
+                    char *trimmed = g_strdup(buf);
+                    if (!trimmed) continue;
+                    char *nl = strpbrk(trimmed, "\r\n");
+                    if (nl) *nl = '\0';
+
+                    gboolean keep = TRUE;
+                    char *sep1 = strchr(trimmed, '|');
+                    if (sep1) {
+                        char *sep2 = strchr(sep1 + 1, '|');
+                        if (sep2) {
+                            *sep2 = '\0';
+                            const char *stored = sep1 + 1;
+                            if (g_strcmp0(stored, stored_basename) == 0) {
+                                keep = FALSE;
+                            }
+                            *sep2 = '|';
+                        }
+                    }
+
+                    if (keep) {
+                        g_ptr_array_add(lines, trimmed);
+                    } else {
+                        g_free(trimmed);
+                    }
+                }
+                fclose(f);
+            }
+
+            FILE *fw = fopen(index_path, "w");
+            if (fw) {
+                for (guint i = 0; i < lines->len; ++i) {
+                    const char *line = g_ptr_array_index(lines, i);
+                    fprintf(fw, "%s\n", line);
+                }
+                fclose(fw);
+            }
+
+            g_ptr_array_free(lines, TRUE);
+        }
+        g_free(index_path);
+#endif
+
+        if (stored_basename) g_free(stored_basename);
+
+        /* Schedule repopulation in an idle callback to avoid issues with widget destruction */
+        if (toplevel && original_path && versions_list) {
+            RepopulateData *data = g_new0(RepopulateData, 1);
+            data->window = GTK_WINDOW(toplevel);
+            data->versions_list = GTK_LIST_BOX(versions_list);
+            data->original_path = g_strdup(original_path);
+            g_idle_add(repopulate_versions_idle, data);
+        }
+    } else {
+        int err = errno;
+        g_printerr("delete_version: failed to remove %s: %s (errno=%d)\n", 
+                   vpath_copy, strerror(err), err);
+    }
+    
+    g_free(vpath_copy);
 }
 
 static const GActionEntry version_element_menu_actions[] = {
     {"open_version", open_version, NULL, NULL, NULL},
-    {"delete_version", delete_version, NULL, NULL, NULL}
+    {"delete_version", delete_version, NULL, NULL, NULL},
+    {"select_for_comparison", select_for_comparison, NULL, NULL, NULL},
+    {"compare_versions", compare_versions, NULL, NULL, NULL}
 };
 
 // ---
@@ -616,6 +847,7 @@ void on_widget_right_click(GtkGestureClick *gesture,
     g_menu_append(menu_model, "Record This Version", "win.record_version");
     g_menu_append(menu_model, "Rename File", "win.rename_file");
     g_menu_append(menu_model, "Delete File", "win.delete_file");
+    clear_comparison_selection();
 
     }
     else if (g_strcmp0(context, "version-element") == 0) {
@@ -625,6 +857,13 @@ void on_widget_right_click(GtkGestureClick *gesture,
                                         G_N_ELEMENTS(version_element_menu_actions),
                                         widget);
         g_menu_append(menu_model, "Open Version", "win.open_version");
+        g_menu_append(menu_model, "Select for Compare", "win.select_for_comparison");
+        
+        // The 'Compare' item is only enabled if exactly two items are selected
+        if (g_list_length(selected_for_comparison) == 2) {
+             g_menu_append(menu_model, "Compare", "win.compare_versions");
+        }
+       
         g_menu_append(menu_model, "Delete Version", "win.delete_version");
     }
     else {
@@ -634,6 +873,7 @@ void on_widget_right_click(GtkGestureClick *gesture,
         
         // No actions to add, just build a simple model
         g_menu_append(menu_model, "No actions for this widget", NULL); // NULL = greyed out
+        clear_comparison_selection();
     }
 
 
@@ -641,7 +881,15 @@ void on_widget_right_click(GtkGestureClick *gesture,
     //
     // This code is the same no matter *which* menu we built.
     
+    // First, check if there's an existing popover and clean it up
+    GtkWidget *old_popover = g_object_get_data(G_OBJECT(widget), "popover");
+    if (old_popover) {
+        gtk_widget_unparent(old_popover);
+        g_object_set_data(G_OBJECT(widget), "popover", NULL);
+    }
+    
     GtkWidget *popover = gtk_popover_menu_new_from_model(G_MENU_MODEL(menu_model));
+    g_object_set_data(G_OBJECT(widget), "popover", popover);
     gtk_widget_set_parent(popover, widget);
     
     GdkRectangle pointing_rect = { (int)x, (int)y, 1, 1 };

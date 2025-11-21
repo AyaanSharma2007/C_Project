@@ -8,7 +8,7 @@ LDFLAGS = $(shell pkg-config --libs gtk4)
 
 # List all your .c files *with their full path*
 # (I'm assuming you use context_menu.c based on your screenshot)
-SOURCES = src/main.c src/sidebar.c src/context_menu.c
+SOURCES = src/main.c src/sidebar.c src/context_menu.c src/diff_logic.c src/diff_view.c src/myers_diff.c
 
 # List all your .h files *with their full path*
 # (Assumes you moved context_menu.h to the include/ folder)
