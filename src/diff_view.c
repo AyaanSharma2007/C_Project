@@ -75,15 +75,9 @@ void create_diff_window(GtkWindow* parent, const char* file1_path, const char* f
     g_object_unref(provider);
 
     // Create tags for highlighting differences with underlines
-    gtk_text_buffer_create_tag(buffer1, "diff-delete", 
-                              "background", "#FFE6E6",
+    gtk_text_buffer_create_tag(buffer2, "diff-insert",
                               "underline", PANGO_UNDERLINE_SINGLE,
-                              "underline-rgba", &(GdkRGBA){1.0, 0.0, 0.0, 1.0},
-                              NULL);
-    gtk_text_buffer_create_tag(buffer2, "diff-insert", 
-                              "background", "#E6FFE6",
-                              "underline", PANGO_UNDERLINE_SINGLE,
-                              "underline-rgba", &(GdkRGBA){0.0, 0.5, 0.0, 1.0},
+                              "foreground", "#b30000",
                               NULL);
 
     // Read file contents
@@ -104,52 +98,76 @@ void create_diff_window(GtkWindow* parent, const char* file1_path, const char* f
     gtk_text_buffer_set_text(buffer1, contents1 ? contents1 : "", -1);
     gtk_text_buffer_set_text(buffer2, contents2 ? contents2 : "", -1);
 
-    // Get character-level diff data and apply highlighting spans
-    GArray* diffs = perform_diff(file1_path, file2_path);
-    if (diffs) {
-        gint left_offset = 0;
-        gint right_offset = 0;
+    // Highlight words in the latest file that differ from the previous version
+    const gchar *p1 = contents1 ? contents1 : "";
+    const gchar *p2 = contents2 ? contents2 : "";
+    gchar *current_word1 = NULL;
+    gint latest_offset = 0; // character offset within buffer2
 
-        for (guint i = 0; i < diffs->len; i++) {
-            DiffOp *op = &g_array_index(diffs, DiffOp, i);
-            if (!op->text) continue;
+    while (*p2) {
+        gunichar ch2 = g_utf8_get_char(p2);
 
-            gint char_len = (gint)g_utf8_strlen(op->text, -1);
-            if (char_len == 0) {
-                g_free(op->text);
+        // Skip whitespace while keeping offsets aligned
+        if (g_unichar_isspace(ch2)) {
+            p2 = g_utf8_next_char(p2);
+            latest_offset++;
+            continue;
+        }
+
+        // Extract next word from latest file
+        const gchar *word2_start = p2;
+        gint word2_chars = 0;
+        while (*p2) {
+            gunichar next = g_utf8_get_char(p2);
+            if (g_unichar_isspace(next)) break;
+            p2 = g_utf8_next_char(p2);
+            word2_chars++;
+        }
+        gchar *word2 = g_strndup(word2_start, p2 - word2_start);
+
+        // Ensure we have the current word from the previous version
+        while (!current_word1 && *p1) {
+            gunichar ch1 = g_utf8_get_char(p1);
+            if (g_unichar_isspace(ch1)) {
+                p1 = g_utf8_next_char(p1);
                 continue;
             }
 
-            switch (op->type) {
-                case DIFF_OP_EQUAL:
-                    left_offset += char_len;
-                    right_offset += char_len;
-                    break;
-
-                case DIFF_OP_DELETE: {
-                    GtkTextIter start, end;
-                    gtk_text_buffer_get_iter_at_offset(buffer1, &start, left_offset);
-                    gtk_text_buffer_get_iter_at_offset(buffer1, &end, left_offset + char_len);
-                    gtk_text_buffer_apply_tag_by_name(buffer1, "diff-delete", &start, &end);
-                    left_offset += char_len;
-                    break;
-                }
-
-                case DIFF_OP_INSERT: {
-                    GtkTextIter start, end;
-                    gtk_text_buffer_get_iter_at_offset(buffer2, &start, right_offset);
-                    gtk_text_buffer_get_iter_at_offset(buffer2, &end, right_offset + char_len);
-                    gtk_text_buffer_apply_tag_by_name(buffer2, "diff-insert", &start, &end);
-                    right_offset += char_len;
-                    break;
-                }
+            const gchar *word1_start = p1;
+            gint dummy_len = 0;
+            while (*p1) {
+                gunichar next1 = g_utf8_get_char(p1);
+                if (g_unichar_isspace(next1)) break;
+                p1 = g_utf8_next_char(p1);
+                dummy_len++;
             }
-
-            g_free(op->text);
+            current_word1 = g_strndup(word1_start, p1 - word1_start);
         }
 
-        g_array_free(diffs, TRUE);
+        gboolean highlight = FALSE;
+        if (current_word1) {
+            if (g_strcmp0(current_word1, word2) == 0) {
+                g_clear_pointer(&current_word1, g_free);
+            } else {
+                highlight = TRUE;
+            }
+        } else {
+            // No more words in previous version; everything remaining is new
+            highlight = TRUE;
+        }
+
+        if (highlight && word2_chars > 0) {
+            GtkTextIter start_iter, end_iter;
+            gtk_text_buffer_get_iter_at_offset(buffer2, &start_iter, latest_offset);
+            gtk_text_buffer_get_iter_at_offset(buffer2, &end_iter, latest_offset + word2_chars);
+            gtk_text_buffer_apply_tag_by_name(buffer2, "diff-insert", &start_iter, &end_iter);
+        }
+
+        latest_offset += word2_chars;
+        g_free(word2);
     }
+
+    g_clear_pointer(&current_word1, g_free);
 
     g_free(contents1);
     g_free(contents2);
